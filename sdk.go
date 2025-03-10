@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"google.golang.org/grpc"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -34,6 +36,12 @@ type GrpcApiInfo struct {
 	GrpcMethod  string `json:"grpc_method"`
 }
 
+type Response struct {
+	ErrCode int64    `json:"err_code"`
+	Message string   `json:"message"`
+	Data    []string `json:"data"`
+}
+
 func (sdk *GatewaySDK) RegisterRoute(route RouteInfo) error {
 	jsonData, err := json.Marshal(route)
 	if err != nil {
@@ -42,7 +50,17 @@ func (sdk *GatewaySDK) RegisterRoute(route RouteInfo) error {
 
 	resp, err := http.Post(sdk.GatewayURL+"/gateway/api", "application/json", bytes.NewBuffer(jsonData))
 	if err != nil {
+		log.Println("http.Post error:", err)
 		return err
+	}
+	// 拿到resp的body里的内容
+	var response Response
+	body, _ := io.ReadAll(resp.Body)
+	json.Unmarshal(body, &response)
+	log.Println(response)
+	if response.ErrCode == 410100 {
+		log.Println(response.ErrCode, "http api已存在，跳过注册")
+		return nil
 	}
 	defer resp.Body.Close()
 
@@ -79,6 +97,28 @@ func (sdk *GatewaySDK) AutoRegisterGinRoutes(router *gin.Engine, serviceName str
 
 	// 批量注册路由
 	return sdk.RegisterRoutes(routes)
+}
+
+// 自动注册GRPC路由
+func (sdk *GatewaySDK) AutoRegisterGRPCRoutes(grpcServer *grpc.Server, serviceName string) error {
+	// 获取 gRPC 的所有服务
+	serviceInfo := grpcServer.GetServiceInfo()
+	var routes []GrpcApiInfo
+	for svc, info := range serviceInfo {
+		for _, method := range info.Methods {
+			httpPath := grpcMethodName2HttpPath(method.Name)
+			routes = append(routes, GrpcApiInfo{
+				ServiceName: serviceName,
+				Path:        "/" + httpPath,
+				Method:      "POST",
+				GrpcService: svc,
+				GrpcMethod:  method.Name,
+			})
+		}
+	}
+	log.Println(routes)
+	// 批量注册路由
+	return sdk.RegisterGRPCRoutes(routes)
 }
 
 func grpcMethodName2Snake(methodName string) string {
@@ -119,6 +159,14 @@ func (sdk *GatewaySDK) RegisterGRPCRoutes(routes []GrpcApiInfo) error {
 		resp, err := http.Post(sdk.GatewayURL+"/gateway/api", "application/json", bytes.NewBuffer(jsonData))
 		if err != nil {
 			return err
+		}
+		// 拿到resp的body里的内容
+		var response Response
+		body, _ := io.ReadAll(resp.Body)
+		json.Unmarshal(body, &response)
+		if response.ErrCode == 410100 {
+			log.Println(response.ErrCode, "grpc api已存在，跳过注册")
+			return nil
 		}
 		defer resp.Body.Close()
 
