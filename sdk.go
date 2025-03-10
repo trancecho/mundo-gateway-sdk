@@ -166,7 +166,7 @@ func (sdk *GatewaySDK) RegisterGRPCRoutes(routes []GrpcApiInfo) error {
 		json.Unmarshal(body, &response)
 		if response.ErrCode == 410100 {
 			log.Println(response.ErrCode, "grpc api已存在，跳过注册")
-			return nil
+			continue
 		}
 		defer resp.Body.Close()
 
