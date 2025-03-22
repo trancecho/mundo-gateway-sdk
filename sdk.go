@@ -19,9 +19,12 @@ type GatewaySDK struct {
 	GatewayURL  string // 网关的地址
 }
 
-func NewGatewaySDK(gatewayURL string) *GatewaySDK {
+func NewGatewaySDK(serviceName, address, protocol, gatewayURL string) *GatewaySDK {
 	return &GatewaySDK{
-		GatewayURL: gatewayURL,
+		ServiceName: serviceName,
+		Address:     address,
+		Protocol:    protocol,
+		GatewayURL:  gatewayURL,
 	}
 }
 
