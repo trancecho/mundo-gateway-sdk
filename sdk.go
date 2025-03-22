@@ -13,12 +13,67 @@ import (
 )
 
 type GatewaySDK struct {
-	GatewayURL string // 网关的地址
+	ServiceName string
+	Address     string
+	Protocol    string
+	GatewayURL  string // 网关的地址
 }
 
 func NewGatewaySDK(gatewayURL string) *GatewaySDK {
 	return &GatewaySDK{
 		GatewayURL: gatewayURL,
+	}
+}
+
+func (g *GatewaySDK) RegisterServiceAddress() {
+	// 注册服务地址到网关
+	url := fmt.Sprintf("%s/gateway/service", g.GatewayURL)
+	data := map[string]string{
+		"name":     g.ServiceName,
+		"prefix":   "/" + g.ServiceName,
+		"protocol": g.Protocol,
+		"address":  g.Address,
+	}
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		log.Println("json.Marshal error:", err)
+		return
+	}
+
+	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		log.Println("http.Post error:", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Println("failed to register service address:", resp.Status)
+	}
+}
+
+func (g *GatewaySDK) SendAliveSignal(serviceName string, address string) {
+	// 发送心跳信号到网关
+	url := fmt.Sprintf("%s/gateway/service/beat", g.GatewayURL)
+	data := map[string]string{
+		"service_name": serviceName,
+		"address":      address,
+	}
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		log.Println("json.Marshal error:", err)
+		return
+	}
+
+	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		log.Println("http.Post error:", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Println("failed to send alive signal:", resp.Status)
 	}
 }
 
