@@ -142,7 +142,7 @@ func (sdk *GatewaySDK) RegisterRoutes(routes []RouteInfo) error {
 // 自动化注册 Gin 路由
 func (sdk *GatewaySDK) AutoRegisterGinRoutes(router *gin.Engine, serviceName string) error {
 	var routes []RouteInfo
-	log.Println(router.Routes())
+	//log.Println(router.Routes())
 
 	// 获取 Gin 的所有路由
 	for _, route := range router.Routes() {
