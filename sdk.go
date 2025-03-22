@@ -19,6 +19,7 @@ type GatewaySDK struct {
 	GatewayURL  string // 网关的地址
 }
 
+// NewGatewaySDK 创建一个新的 GatewaySDK 实例
 func NewGatewaySDK(serviceName, address, protocol, gatewayURL string) *GatewaySDK {
 	return &GatewaySDK{
 		ServiceName: serviceName,
