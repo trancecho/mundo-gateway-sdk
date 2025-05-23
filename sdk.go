@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type GatewaySDK struct {
@@ -79,6 +80,16 @@ func (g *GatewaySDK) SendAliveSignal(serviceName string, address string) {
 	if resp.StatusCode != http.StatusOK {
 		log.Println("failed to send alive signal:", resp.Status)
 	}
+}
+
+func (g *GatewaySDK) StartHeartbeat() {
+	// 启动心跳信号
+	go func() {
+		for {
+			g.SendAliveSignal(g.ServiceName, g.Address)
+			time.Sleep(10 * time.Second)
+		}
+	}()
 }
 
 type RouteInfo struct {
