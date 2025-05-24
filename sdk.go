@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 	"io"
 	"log"
 	"net/http"
@@ -13,16 +14,37 @@ import (
 	"time"
 )
 
-type GatewaySDK struct {
+// v2版本，2025年5月
+
+type IGatewayV2 interface {
+	GrpcConn(server *grpc.Server)
+	// todo 这里以后再写
+	//HttpConn()
+}
+type GatewayService struct {
 	ServiceName string
 	Address     string
 	Protocol    string
 	GatewayURL  string // 网关的地址
 }
 
-// NewGatewaySDK 创建一个新的 GatewaySDK 实例
-func NewGatewaySDK(serviceName, address, protocol, gatewayURL string) *GatewaySDK {
-	return &GatewaySDK{
+func (this *GatewayService) GrpcConn(server *grpc.Server) {
+	this.RegisterServiceAddress()
+	log.Println("ss")
+	this.StartHeartbeat()
+	log.Println("aa")
+	// 内部做反射
+	reflection.Register(server)
+	err := this.AutoRegisterGRPCRoutes(server, this.ServiceName)
+	if err != nil {
+		log.Println("网关注册api警报", err)
+	}
+}
+
+var _ IGatewayV2 = &GatewayService{}
+
+func NewGatewayService(serviceName, address, protocol, gatewayURL string) *GatewayService {
+	return &GatewayService{
 		ServiceName: serviceName,
 		Address:     address,
 		Protocol:    protocol,
@@ -30,7 +52,7 @@ func NewGatewaySDK(serviceName, address, protocol, gatewayURL string) *GatewaySD
 	}
 }
 
-func (g *GatewaySDK) RegisterServiceAddress() {
+func (g *GatewayService) RegisterServiceAddress() {
 	// 注册服务地址到网关
 	url := fmt.Sprintf("%s/gateway/service", g.GatewayURL)
 	data := map[string]string{
@@ -57,7 +79,7 @@ func (g *GatewaySDK) RegisterServiceAddress() {
 	}
 }
 
-func (g *GatewaySDK) SendAliveSignal(serviceName string, address string) {
+func (g *GatewayService) SendAliveSignal(serviceName string, address string) {
 	// 发送心跳信号到网关
 	url := fmt.Sprintf("%s/gateway/service/beat", g.GatewayURL)
 	data := map[string]string{
@@ -82,7 +104,7 @@ func (g *GatewaySDK) SendAliveSignal(serviceName string, address string) {
 	}
 }
 
-func (g *GatewaySDK) StartHeartbeat() {
+func (g *GatewayService) StartHeartbeat() {
 	// 启动心跳信号
 	go func() {
 		for {
@@ -107,12 +129,12 @@ type GrpcApiInfo struct {
 }
 
 type Response struct {
-	ErrCode int64    `json:"err_code"`
+	ErrCode any      `json:"err_code"`
 	Message string   `json:"message"`
 	Data    []string `json:"data"`
 }
 
-func (sdk *GatewaySDK) RegisterRoute(route RouteInfo) error {
+func (sdk *GatewayService) RegisterRoute(route RouteInfo) error {
 	jsonData, err := json.Marshal(route)
 	if err != nil {
 		return err
@@ -141,7 +163,7 @@ func (sdk *GatewaySDK) RegisterRoute(route RouteInfo) error {
 	return nil
 }
 
-func (sdk *GatewaySDK) RegisterRoutes(routes []RouteInfo) error {
+func (sdk *GatewayService) RegisterRoutes(routes []RouteInfo) error {
 	for _, route := range routes {
 		if err := sdk.RegisterRoute(route); err != nil {
 			return err
@@ -151,7 +173,7 @@ func (sdk *GatewaySDK) RegisterRoutes(routes []RouteInfo) error {
 }
 
 // 自动化注册 Gin 路由
-func (sdk *GatewaySDK) AutoRegisterGinRoutes(router *gin.Engine, serviceName string) error {
+func (sdk *GatewayService) AutoRegisterGinRoutes(router *gin.Engine, serviceName string) error {
 	var routes []RouteInfo
 	//log.Println(router.Routes())
 
@@ -170,7 +192,7 @@ func (sdk *GatewaySDK) AutoRegisterGinRoutes(router *gin.Engine, serviceName str
 }
 
 // 自动注册GRPC路由
-func (sdk *GatewaySDK) AutoRegisterGRPCRoutes(grpcServer *grpc.Server, serviceName string) error {
+func (sdk *GatewayService) AutoRegisterGRPCRoutes(grpcServer *grpc.Server, serviceName string) error {
 	// 获取 gRPC 的所有服务
 	serviceInfo := grpcServer.GetServiceInfo()
 	var routes []GrpcApiInfo
@@ -219,7 +241,7 @@ func grpcMethodName2HttpPath(methodName string) string {
 	return res
 }
 
-func (sdk *GatewaySDK) RegisterGRPCRoutes(routes []GrpcApiInfo) error {
+func (sdk *GatewayService) RegisterGRPCRoutes(routes []GrpcApiInfo) error {
 	for _, route := range routes {
 		jsonData, err := json.Marshal(route)
 		if err != nil {
