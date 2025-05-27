@@ -21,11 +21,15 @@ type IGatewayV2 interface {
 	// todo 这里以后再写
 	//HttpConn()
 }
+type RedisTokenGetter interface {
+	GetToken() (string, error)
+}
 type GatewayService struct {
 	ServiceName string
 	Address     string
 	Protocol    string
 	GatewayURL  string // 网关的地址
+	TokenGetter RedisTokenGetter
 }
 
 func (this *GatewayService) GrpcConn(server *grpc.Server) {
@@ -43,12 +47,13 @@ func (this *GatewayService) GrpcConn(server *grpc.Server) {
 
 var _ IGatewayV2 = &GatewayService{}
 
-func NewGatewayService(serviceName, address, protocol, gatewayURL string) *GatewayService {
+func NewGatewayService(serviceName, address, protocol, gatewayURL string, getter RedisTokenGetter) *GatewayService {
 	return &GatewayService{
 		ServiceName: serviceName,
 		Address:     address,
 		Protocol:    protocol,
 		GatewayURL:  gatewayURL,
+		TokenGetter: getter,
 	}
 }
 
@@ -67,7 +72,23 @@ func (g *GatewayService) RegisterServiceAddress() {
 		return
 	}
 
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		log.Println("http.NewRequest error:", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	if g.TokenGetter != nil {
+		token, err := g.TokenGetter.GetToken()
+		if err == nil && token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+
 	if err != nil {
 		log.Println("http.Post error:", err)
 		return
