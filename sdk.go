@@ -14,6 +14,8 @@ import (
 	"time"
 )
 
+//
+
 // v2版本，2025年5月
 
 type IGatewayV2 interface {
@@ -21,19 +23,24 @@ type IGatewayV2 interface {
 	// todo 这里以后再写
 	//HttpConn()
 }
-type RedisTokenGetter interface {
-	GetToken() (string, error)
-}
+
+//	type RedisTokenGetter interface {
+//		GetToken() (string, error)
+//	}
 type GatewayService struct {
 	ServiceName string
 	Address     string
 	Protocol    string
 	GatewayURL  string // 网关的地址
-	TokenGetter RedisTokenGetter
+	TokenGetter *MyRedisTokenGetter
+	Password    string
 }
 
 func (this *GatewayService) GrpcConn(server *grpc.Server) {
-	this.RegisterServiceAddress()
+	ok := this.RegisterServiceAddress()
+	if !ok {
+		this.RegisterServiceAddress()
+	}
 	log.Println("ss")
 	this.StartHeartbeat()
 	log.Println("aa")
@@ -47,7 +54,7 @@ func (this *GatewayService) GrpcConn(server *grpc.Server) {
 
 var _ IGatewayV2 = &GatewayService{}
 
-func NewGatewayService(serviceName, address, protocol, gatewayURL string, getter RedisTokenGetter) *GatewayService {
+func NewGatewayService(serviceName, address, protocol, gatewayURL string, getter *MyRedisTokenGetter) *GatewayService {
 	return &GatewayService{
 		ServiceName: serviceName,
 		Address:     address,
@@ -57,7 +64,7 @@ func NewGatewayService(serviceName, address, protocol, gatewayURL string, getter
 	}
 }
 
-func (g *GatewayService) RegisterServiceAddress() {
+func (g *GatewayService) RegisterServiceAddress() bool {
 	// 注册服务地址到网关
 	url := fmt.Sprintf("%s/gateway/service", g.GatewayURL)
 	data := map[string]string{
@@ -65,39 +72,63 @@ func (g *GatewayService) RegisterServiceAddress() {
 		"prefix":   "/" + g.ServiceName,
 		"protocol": g.Protocol,
 		"address":  g.Address,
+		"password": g.Password,
 	}
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		log.Println("json.Marshal error:", err)
-		return
+		return false
 	}
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		log.Println("http.NewRequest error:", err)
-		return
+		return false
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	if g.TokenGetter != nil {
-		token, err := g.TokenGetter.GetToken()
-		if err == nil && token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
-		}
-	}
+	//if g.TokenGetter != nil {
+	//	token, err := g.TokenGetter.GetToken()
+	//	if err == nil && token != "" {
+	//		req.Header.Set("Authorization", "Bearer "+token)
+	//	}
+	//}
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 
 	if err != nil {
 		log.Println("http.Post error:", err)
-		return
+		return false
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		var errCodeReceiver ErrorCodeReceiver
+		decoder := json.NewDecoder(resp.Body)
+		if err := decoder.Decode(&errCodeReceiver); err != nil {
+			fmt.Println("解析 JSON 失败:", err)
+			return false
+		}
+		if errCodeReceiver.ErrorCode == RedisDynamicPasswordError {
+			token, err := g.TokenGetter.GetToken()
+			if err != nil {
+				log.Println("TokenGetter.GetToken error:", err)
+			}
+			g.Password = token
+		}
 		log.Println("failed to register service address:", resp.Status)
+		return false
 	}
+	return true
+}
+
+const (
+	RedisDynamicPasswordError = "Error.RedisDynamicPassword"
+)
+
+type ErrorCodeReceiver struct {
+	ErrorCode string `json:"err_code"`
 }
 
 func (g *GatewayService) SendAliveSignal(serviceName string, address string) {
