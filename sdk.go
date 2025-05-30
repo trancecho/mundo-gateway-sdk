@@ -110,6 +110,7 @@ func (g *GatewayService) RegisterServiceAddress() bool {
 			fmt.Println("解析 JSON 失败:", err)
 			return false
 		}
+		log.Println("errCodeReceiver:", errCodeReceiver)
 		if errCodeReceiver.ErrorCode == RedisDynamicPasswordError {
 			token, err := g.TokenGetter.GetToken()
 			if err != nil {
@@ -128,7 +129,7 @@ const (
 )
 
 type ErrorCodeReceiver struct {
-	ErrorCode string `json:"err_code"`
+	ErrorCode any `json:"err_code"`
 }
 
 func (g *GatewayService) SendAliveSignal(serviceName string, address string) {
