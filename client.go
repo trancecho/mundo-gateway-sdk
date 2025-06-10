@@ -55,11 +55,14 @@ func (this *Client) GetTarget(servicename string) (string, error) {
 		return "", err
 	}
 	target := res.Data.Target
-	if !strings.HasPrefix(target, "grpc://") && !strings.HasPrefix(target, "grpcs://") {
+	if !strings.HasPrefix(target, "grpc://") && !strings.HasPrefix(target, "grpcs://") &&
+		!strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
 		log.Println("target address is invalid")
 		return "", err
 	}
 	target = strings.TrimPrefix(target, "grpc://")
 	target = strings.TrimPrefix(target, "grpcs://")
+	target = strings.TrimPrefix(target, "http://")
+	target = strings.TrimPrefix(target, "https://")
 	return target, nil
 }

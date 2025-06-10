@@ -11,7 +11,7 @@ type MyRedisTokenGetter struct {
 	key string
 }
 
-func NewMyRedisTokenGetter(redisAddr, pwd string, tokenKey string) *MyRedisTokenGetter {
+func NewMyRedisTokenGetter(redisAddr, pwd string) *MyRedisTokenGetter {
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     redisAddr,
 		Password: pwd,
@@ -20,7 +20,7 @@ func NewMyRedisTokenGetter(redisAddr, pwd string, tokenKey string) *MyRedisToken
 	return &MyRedisTokenGetter{
 		rdb: rdb,
 		ctx: context.Background(),
-		key: tokenKey,
+		key: "gateway:register:password",
 	}
 }
 
