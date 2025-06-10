@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/trancecho/mundo-gateway-sdk/i"
+	"github.com/trancecho/mundo-gateway-sdk/model"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 	"io"
@@ -14,25 +16,41 @@ import (
 	"time"
 )
 
+//
+
 // v2版本，2025年5月
 
-type IGatewayV2 interface {
-	GrpcConn(server *grpc.Server)
-	// todo 这里以后再写
-	//HttpConn()
-}
+//	type RedisTokenGetter interface {
+//		GetToken() (string, error)
+//	}
 type GatewayService struct {
 	ServiceName string
 	Address     string
 	Protocol    string
 	GatewayURL  string // 网关的地址
+	TokenGetter *MyRedisTokenGetter
+	Password    string
+}
+
+func (this *GatewayService) HttpConn(router *gin.Engine) {
+	ok := this.RegisterServiceAddress()
+	if !ok {
+		this.RegisterServiceAddress()
+	}
+	this.StartHeartbeat()
+	// 自动注册Gin路由
+	err := this.AutoRegisterGinRoutes(router, this.ServiceName)
+	if err != nil {
+		log.Println("网关注册api警报", err)
+	}
 }
 
 func (this *GatewayService) GrpcConn(server *grpc.Server) {
-	this.RegisterServiceAddress()
-	log.Println("ss")
+	ok := this.RegisterServiceAddress()
+	if !ok {
+		this.RegisterServiceAddress()
+	}
 	this.StartHeartbeat()
-	log.Println("aa")
 	// 内部做反射
 	reflection.Register(server)
 	err := this.AutoRegisterGRPCRoutes(server, this.ServiceName)
@@ -41,18 +59,27 @@ func (this *GatewayService) GrpcConn(server *grpc.Server) {
 	}
 }
 
-var _ IGatewayV2 = &GatewayService{}
+var _ i.IGatewayV2 = &GatewayService{}
 
-func NewGatewayService(serviceName, address, protocol, gatewayURL string) *GatewayService {
-	return &GatewayService{
+func NewGatewayService(serviceName, address, protocol, gatewayURL string, getter *MyRedisTokenGetter) *GatewayService {
+	res := &GatewayService{
 		ServiceName: serviceName,
 		Address:     address,
 		Protocol:    protocol,
 		GatewayURL:  gatewayURL,
+		TokenGetter: getter,
 	}
+	token, err := res.TokenGetter.GetToken()
+	if err != nil {
+		log.Println("获取Token失败，请检查redis是否有token:", err)
+	} else {
+		res.Password = token
+	}
+	log.Println("GatewayService初始化成功:", res.ServiceName, res.Address, res.Protocol, res.GatewayURL)
+	return res
 }
 
-func (g *GatewayService) RegisterServiceAddress() {
+func (g *GatewayService) RegisterServiceAddress() bool {
 	// 注册服务地址到网关
 	url := fmt.Sprintf("%s/gateway/service", g.GatewayURL)
 	data := map[string]string{
@@ -60,26 +87,67 @@ func (g *GatewayService) RegisterServiceAddress() {
 		"prefix":   "/" + g.ServiceName,
 		"protocol": g.Protocol,
 		"address":  g.Address,
+		"password": g.Password,
 	}
 	jsonData, err := json.Marshal(data)
 	if err != nil {
 		log.Println("json.Marshal error:", err)
-		return
+		return false
 	}
 
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		log.Println("http.NewRequest error:", err)
+		return false
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	//if g.TokenGetter != nil {
+	//	token, err := g.TokenGetter.GetToken()
+	//	if err == nil && token != "" {
+	//		req.Header.Set("Authorization", "Bearer "+token)
+	//	}
+	//}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+
 	if err != nil {
 		log.Println("http.Post error:", err)
-		return
+		return false
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		var errCodeReceiver ErrorCodeReceiver
+		decoder := json.NewDecoder(resp.Body)
+		if err := decoder.Decode(&errCodeReceiver); err != nil {
+			fmt.Println("解析 JSON 失败:", err)
+			return false
+		}
+		log.Println("errCodeReceiver:", errCodeReceiver)
+		if errCodeReceiver.ErrorCode == RedisDynamicPasswordError {
+			token, err := g.TokenGetter.GetToken()
+			if err != nil {
+				log.Println("TokenGetter.GetToken error:", err)
+			}
+			g.Password = token
+		}
 		log.Println("failed to register service address:", resp.Status)
+		return false
 	}
+	return true
 }
 
-func (g *GatewayService) SendAliveSignal(serviceName string, address string) {
+const (
+	RedisDynamicPasswordError = "Error.RedisDynamicPassword"
+)
+
+type ErrorCodeReceiver struct {
+	ErrorCode any `json:"err_code"`
+}
+
+func (g *GatewayService) sendAliveSignal(serviceName string, address string) {
 	// 发送心跳信号到网关
 	url := fmt.Sprintf("%s/gateway/service/beat", g.GatewayURL)
 	data := map[string]string{
@@ -108,16 +176,10 @@ func (g *GatewayService) StartHeartbeat() {
 	// 启动心跳信号
 	go func() {
 		for {
-			g.SendAliveSignal(g.ServiceName, g.Address)
+			g.sendAliveSignal(g.ServiceName, g.Address)
 			time.Sleep(10 * time.Second)
 		}
 	}()
-}
-
-type RouteInfo struct {
-	ServiceName string `json:"service_name"`
-	Path        string `json:"path"`
-	Method      string `json:"method"`
 }
 
 type GrpcApiInfo struct {
@@ -134,7 +196,7 @@ type Response struct {
 	Data    []string `json:"data"`
 }
 
-func (sdk *GatewayService) RegisterRoute(route RouteInfo) error {
+func (sdk *GatewayService) registerRoute(route model.RouteInfo) error {
 	jsonData, err := json.Marshal(route)
 	if err != nil {
 		return err
@@ -163,9 +225,9 @@ func (sdk *GatewayService) RegisterRoute(route RouteInfo) error {
 	return nil
 }
 
-func (sdk *GatewayService) RegisterRoutes(routes []RouteInfo) error {
+func (sdk *GatewayService) registerRoutes(routes []model.RouteInfo) error {
 	for _, route := range routes {
-		if err := sdk.RegisterRoute(route); err != nil {
+		if err := sdk.registerRoute(route); err != nil {
 			return err
 		}
 	}
@@ -174,13 +236,13 @@ func (sdk *GatewayService) RegisterRoutes(routes []RouteInfo) error {
 
 // 自动化注册 Gin 路由
 func (sdk *GatewayService) AutoRegisterGinRoutes(router *gin.Engine, serviceName string) error {
-	var routes []RouteInfo
+	var routes []model.RouteInfo
 	//log.Println(router.Routes())
 
 	// 获取 Gin 的所有路由
 	for _, route := range router.Routes() {
 		log.Println(route.Path, route.Method)
-		routes = append(routes, RouteInfo{
+		routes = append(routes, model.RouteInfo{
 			ServiceName: serviceName,
 			Path:        route.Path,
 			Method:      route.Method,
@@ -188,7 +250,7 @@ func (sdk *GatewayService) AutoRegisterGinRoutes(router *gin.Engine, serviceName
 	}
 
 	// 批量注册路由
-	return sdk.RegisterRoutes(routes)
+	return sdk.registerRoutes(routes)
 }
 
 // 自动注册GRPC路由
@@ -210,7 +272,7 @@ func (sdk *GatewayService) AutoRegisterGRPCRoutes(grpcServer *grpc.Server, servi
 	}
 	log.Println(routes)
 	// 批量注册路由
-	return sdk.RegisterGRPCRoutes(routes)
+	return sdk.registerGRPCRoutes(routes)
 }
 
 func grpcMethodName2Snake(methodName string) string {
@@ -241,7 +303,7 @@ func grpcMethodName2HttpPath(methodName string) string {
 	return res
 }
 
-func (sdk *GatewayService) RegisterGRPCRoutes(routes []GrpcApiInfo) error {
+func (sdk *GatewayService) registerGRPCRoutes(routes []GrpcApiInfo) error {
 	for _, route := range routes {
 		jsonData, err := json.Marshal(route)
 		if err != nil {
@@ -267,4 +329,27 @@ func (sdk *GatewayService) RegisterGRPCRoutes(routes []GrpcApiInfo) error {
 		}
 	}
 	return nil
+}
+
+func (sdk *GatewayService) Ping() string {
+	url := fmt.Sprintf("%s/gateway/ping", sdk.GatewayURL)
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Println("Ping error:", err)
+		return "Ping failed"
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Println("Ping failed with status:", resp.Status)
+		return "Ping failed with status: " + resp.Status
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Println("Read body error:", err)
+		return "Ping failed to read body"
+	}
+
+	return string(body)
 }
