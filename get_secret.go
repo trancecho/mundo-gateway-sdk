@@ -11,11 +11,11 @@ type MyRedisTokenGetter struct {
 	key string
 }
 
-func NewMyRedisTokenGetter(redisAddr, pwd string) *MyRedisTokenGetter {
+func NewMyRedisTokenGetter(redisAddr, pwd string, db int) *MyRedisTokenGetter {
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     redisAddr,
 		Password: pwd,
-		DB:       0,
+		DB:       db,
 	})
 	return &MyRedisTokenGetter{
 		rdb: rdb,
