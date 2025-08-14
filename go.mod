@@ -1,10 +1,10 @@
 module github.com/trancecho/mundo-gateway-sdk
 
-go 1.23.6
+go 1.24.2
 
 require (
 	github.com/gin-gonic/gin v1.10.0
-	github.com/go-redis/redis/v8 v8.11.5
+	github.com/redis/go-redis/v9 v9.12.1
 	google.golang.org/grpc v1.71.0
 )
 
